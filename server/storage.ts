@@ -127,6 +127,46 @@ export class DatabaseStorage implements IStorage {
   // Streak operations
   async getStreakByUserId(userId: string): Promise<Streak | undefined> {
     const [streak] = await db.select().from(streaks).where(eq(streaks.userId, userId));
+
+    if (!streak) {
+      return undefined;
+    }
+
+    // Calculate current streak based on start date
+    if (streak.startDate) {
+      const startDate = new Date(streak.startDate);
+      const today = new Date();
+
+      // Reset time to start of day for accurate day calculation
+      startDate.setHours(0, 0, 0, 0);
+      today.setHours(0, 0, 0, 0);
+
+      // Calculate the difference in days
+      const diffInMs = today.getTime() - startDate.getTime();
+      const diffInDays = Math.floor(diffInMs / (1000 * 60 * 60 * 24));
+
+      // Update the currentStreak with calculated value
+      const calculatedStreak = Math.max(0, diffInDays);
+
+      // Update the longest streak if current is higher
+      const updatedLongestStreak = Math.max(streak.longestStreak, calculatedStreak);
+
+      // Update streak in database with calculated values
+      if (calculatedStreak !== streak.currentStreak || updatedLongestStreak !== streak.longestStreak) {
+        const [updatedStreak] = await db
+          .update(streaks)
+          .set({
+            currentStreak: calculatedStreak,
+            longestStreak: updatedLongestStreak,
+            updatedAt: new Date(),
+          })
+          .where(eq(streaks.userId, userId))
+          .returning();
+
+        return updatedStreak;
+      }
+    }
+
     return streak;
   }
 
@@ -158,11 +198,13 @@ export class DatabaseStorage implements IStorage {
   }
 
   async resetStreak(userId: string): Promise<Streak> {
+    const today = new Date().toISOString().split('T')[0];
     const [resetStreak] = await db
       .update(streaks)
       .set({
         currentStreak: 0,
-        lastResetDate: new Date().toISOString().split('T')[0],
+        startDate: today,
+        lastResetDate: today,
         updatedAt: new Date(),
       })
       .where(eq(streaks.userId, userId))
@@ -453,7 +495,46 @@ class MemoryStorage implements IStorage {
   }
 
   async getStreakByUserId(userId: string): Promise<Streak | undefined> {
-    return this.streaks.get(userId);
+    const streak = this.streaks.get(userId);
+
+    if (!streak) {
+      return undefined;
+    }
+
+    // Calculate current streak based on start date
+    if (streak.startDate) {
+      const startDate = new Date(streak.startDate);
+      const today = new Date();
+
+      // Reset time to start of day for accurate day calculation
+      startDate.setHours(0, 0, 0, 0);
+      today.setHours(0, 0, 0, 0);
+
+      // Calculate the difference in days
+      const diffInMs = today.getTime() - startDate.getTime();
+      const diffInDays = Math.floor(diffInMs / (1000 * 60 * 60 * 24));
+
+      // Update the currentStreak with calculated value
+      const calculatedStreak = Math.max(0, diffInDays);
+
+      // Update the longest streak if current is higher
+      const updatedLongestStreak = Math.max(streak.longestStreak, calculatedStreak);
+
+      // Update streak in memory with calculated values
+      if (calculatedStreak !== streak.currentStreak || updatedLongestStreak !== streak.longestStreak) {
+        const updatedStreak = {
+          ...streak,
+          currentStreak: calculatedStreak,
+          longestStreak: updatedLongestStreak,
+          updatedAt: new Date(),
+        };
+
+        this.streaks.set(userId, updatedStreak);
+        return updatedStreak;
+      }
+    }
+
+    return streak;
   }
 
   async updateStreak(userId: string, currentStreak: number, longestStreak: number): Promise<Streak> {
@@ -476,12 +557,14 @@ class MemoryStorage implements IStorage {
 
   async resetStreak(userId: string): Promise<Streak> {
     const now = new Date();
+    const today = now.toISOString().split("T")[0];
     const reset: Streak = {
       id: this.streaks.get(userId)?.id || randomUUID(),
       userId,
       currentStreak: 0,
       longestStreak: this.streaks.get(userId)?.longestStreak ?? 0,
-      lastResetDate: now.toISOString().split("T")[0] as any,
+      startDate: today as any,
+      lastResetDate: today as any,
       createdAt: this.streaks.get(userId)?.createdAt ?? now,
       updatedAt: now,
     } as Streak;
